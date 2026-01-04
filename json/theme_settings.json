@@ -1,0 +1,32 @@
+{
+  "main_window": {
+    "primary_color": "#9D00FF",
+    "text_color": "#FFFFFF",
+    "background_opacity": 240,
+    "glass_effect": false
+  },
+  "import_panel": {
+    "primary_color": "#FFC0CB",
+    "text_color": "#8B4513",
+    "background_opacity": 255,
+    "glass_effect": false
+  },
+  "advanced_settings": {
+    "primary_color": "#FFC0CB",
+    "text_color": "#8B4513",
+    "background_opacity": 255,
+    "glass_effect": false
+  },
+  "theme_settings": {
+    "primary_color": "#FFC0CB",
+    "text_color": "#8B4513",
+    "background_opacity": 255,
+    "glass_effect": false
+  },
+  "batch_import": {
+    "primary_color": "#FFC0CB",
+    "text_color": "#8B4513",
+    "background_opacity": 120,
+    "glass_effect": false
+  }
+}
