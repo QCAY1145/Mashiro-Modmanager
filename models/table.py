@@ -545,9 +545,6 @@ class CustomModTable(QTableWidget):
     
     def on_checkbox_state_changed(self, row, is_checked):
         """复选框状态改变处理"""
-        # 可以在这里添加额外的逻辑，比如更新统计数据
-        self.statistics_changed.emit()
-        
         # 记录使用日志并操作文件
         name_item = self.item(row, 1)
         if name_item:
@@ -558,6 +555,21 @@ class CustomModTable(QTableWidget):
                 parent = parent.parent()
             if parent:
                 if is_checked:
+                    # 启用前先检查游戏目录是否设置
+                    if not parent.check_game_path_set():
+                        # 游戏目录未设置，回滚复选框状态
+                        if row in self.checkbox_widgets:
+                            self.checkbox_widgets[row].set_checked(False)
+                        # 弹出提示并打开高级设置
+                        from PySide6.QtWidgets import QMessageBox
+                        QMessageBox.warning(
+                            parent,
+                            "请先设置游戏目录",
+                            "请先设置游戏目录！\n\n将自动打开高级设置界面。"
+                        )
+                        parent.show_advanced_settings_panel()
+                        return  # 不更新统计信息，因为实际上没有启用
+                    
                     # 启用时，先尝试应用mod，如果失败则回滚复选框状态
                     success = parent.apply_mod_to_game(mod_name, is_checked)
                     if not success:
@@ -572,6 +584,9 @@ class CustomModTable(QTableWidget):
                     parent.log_mod_usage(mod_name, is_checked)
             else:
                 print(f"[错误] 无法找到主窗口")
+        
+        # 更新统计数据（只有在成功启用/禁用后才更新）
+        self.statistics_changed.emit()
         
         # 确保选中行的绿色被保持（复选框状态改变可能触发重绘）
         # 使用QTimer.singleShot延迟执行，确保在重绘后恢复绿色

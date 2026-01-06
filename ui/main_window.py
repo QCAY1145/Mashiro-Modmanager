@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 # 添加项目根目录到Python路径，以便导入config模块
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
@@ -15,7 +16,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QStatusBar, QLabel, QPushButton, QLineEdit, QCheckBox, QComboBox,
     QFormLayout, QTreeWidget, QTreeWidgetItem, QFileDialog, QInputDialog,
-    QMessageBox, QScrollArea, QStyle, QGraphicsDropShadowEffect, QSlider, QGroupBox, QColorDialog, QDialog
+    QMessageBox, QScrollArea, QStyle, QGraphicsDropShadowEffect, QSlider, QGroupBox, QColorDialog, QDialog, QListWidget, QListWidgetItem
 )
 from PySide6.QtCore import Qt, QDate, QSize, QTimer, Signal, QThread
 from PySide6.QtCore import QItemSelectionModel
@@ -37,12 +38,16 @@ def _import_panels():
         from models.panels import (
             BinaryDisablePanel, BinarySelectionPanel, AdminPermissionPanel,
             BatchImportPanel, UnknownCategoryAuthorPanel, ConflictResolutionPanel,
-            PriorityAdjustmentPanel, CategoryManagementPanel, ExportSelectionPanel, VirtualMappingPriorityPanel
+            PriorityAdjustmentPanel, CategoryManagementPanel, ExportSelectionPanel, VirtualMappingPriorityPanel,
+            DictionarySelectionPanel, DictionaryEditPanel,
+            ScriptSelectionPanel, ScriptEditPanel
         )
         return (
             BinaryDisablePanel, BinarySelectionPanel, AdminPermissionPanel,
             BatchImportPanel, UnknownCategoryAuthorPanel, ConflictResolutionPanel,
-            PriorityAdjustmentPanel, CategoryManagementPanel, ExportSelectionPanel, VirtualMappingPriorityPanel
+            PriorityAdjustmentPanel, CategoryManagementPanel, ExportSelectionPanel, VirtualMappingPriorityPanel,
+            DictionarySelectionPanel, DictionaryEditPanel,
+            ScriptSelectionPanel, ScriptEditPanel
         )
     except ImportError:
         # 打包环境下的回退方案：尝试多种路径
@@ -77,7 +82,9 @@ def _import_panels():
                 panels_module.PriorityAdjustmentPanel,
                 panels_module.CategoryManagementPanel,
                 panels_module.ExportSelectionPanel,
-                panels_module.VirtualMappingPriorityPanel
+                panels_module.VirtualMappingPriorityPanel,
+                panels_module.DictionarySelectionPanel,
+                panels_module.DictionaryEditPanel
             )
         except:
             pass
@@ -101,7 +108,11 @@ def _import_panels():
                             panels_module.PriorityAdjustmentPanel,
                             panels_module.CategoryManagementPanel,
                             panels_module.ExportSelectionPanel,
-                            panels_module.VirtualMappingPriorityPanel
+                            panels_module.VirtualMappingPriorityPanel,
+                            panels_module.DictionarySelectionPanel,
+                            panels_module.DictionaryEditPanel,
+                            panels_module.ScriptSelectionPanel,
+                            panels_module.ScriptEditPanel
                         )
                 except Exception as e:
                     continue
@@ -119,7 +130,9 @@ def _import_panels():
 (
     BinaryDisablePanel, BinarySelectionPanel, AdminPermissionPanel,
     BatchImportPanel, UnknownCategoryAuthorPanel, ConflictResolutionPanel,
-    PriorityAdjustmentPanel, CategoryManagementPanel, ExportSelectionPanel, VirtualMappingPriorityPanel
+    PriorityAdjustmentPanel, CategoryManagementPanel, ExportSelectionPanel, VirtualMappingPriorityPanel,
+    DictionarySelectionPanel, DictionaryEditPanel,
+    ScriptSelectionPanel, ScriptEditPanel
 ) = _import_panels()
 
 from utils.animation_utils import AnimatedTransition
@@ -701,8 +714,6 @@ class MainWindow(QMainWindow):
             if os.path.isdir(item_path):
                 found_folders.append(item)
         
-        print(f"[调试] 在目录中找到 {len(found_folders)} 个文件夹: {found_folders}")
-        
         for item in os.listdir(hunt_box_dir):
             item_path = os.path.join(hunt_box_dir, item)
             
@@ -719,11 +730,6 @@ class MainWindow(QMainWindow):
                 # 检查是否有 files 文件夹和 info.xml
                 file_folder = os.path.join(item_path, "files")
                 info_xml_path = os.path.join(item_path, "info.xml")
-                
-                print(f"[调试] 检查文件夹 {item}:")
-                print(f"  - files文件夹存在: {os.path.exists(file_folder)}")
-                print(f"  - files是目录: {os.path.isdir(file_folder) if os.path.exists(file_folder) else False}")
-                print(f"  - info.xml存在: {os.path.exists(info_xml_path)}")
                 
                 if not os.path.exists(file_folder) or not os.path.isdir(file_folder):
                     # 跳过没有files文件夹的
@@ -2202,6 +2208,598 @@ class MainWindow(QMainWindow):
             "该功能未完善，发行版暂不提供，愿意参与开发测试请联系作者"
         )
     
+    def show_mod_editor_script_dialog(self):
+        """显示模组编辑脚本选择并运行"""
+        import glob
+        import sys
+        import subprocess
+        dialog = QDialog(self)
+        dialog.setWindowTitle("运行模组编辑脚本")
+        dialog.setMinimumSize(520, 420)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: rgba(255, 228, 240, 230);  /* 更浅的粉色背景 */
+                border: 1px solid #8B4513;
+                border-radius: 6px;
+            }
+        """)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        dialog.setLayout(layout)
+        
+        info_label = QLabel("选择脚本（点击选中，再次点击取消选中）")
+        info_label.setStyleSheet("""
+            QLabel {
+                color: #8B4513;  /* 棕色文字 */
+                font-size: 14px;
+                font-weight: bold;
+            }
+        """)
+        layout.addWidget(info_label)
+        
+        script_list = QListWidget()
+        script_list.setSelectionMode(QListWidget.SingleSelection)
+        script_list.setStyleSheet("""
+            QListWidget {
+                background-color: rgba(255, 255, 255, 220);
+                border: 1px solid #8B4513;
+                border-radius: 6px;
+                color: #000000;
+                padding: 6px;
+            }
+            QListWidget::item {
+                padding: 6px 8px;
+            }
+            QListWidget::item:selected {
+                background-color: rgba(255, 182, 193, 220);  /* 浅粉色高亮 */
+                color: #000000;
+                border-radius: 4px;
+            }
+        """)
+        layout.addWidget(script_list, 1)
+        
+        # 加载脚本列表
+        project_root = self.get_project_root()
+        script_dir = os.path.join(project_root, "script", "mod_editor")
+        os.makedirs(script_dir, exist_ok=True)
+        script_files = sorted(glob.glob(os.path.join(script_dir, "*.py")))
+        for path in script_files:
+            name = os.path.basename(path)
+            item = QListWidgetItem(name)
+            item.setData(Qt.UserRole, path)
+            script_list.addItem(item)
+        
+        # 单击切换选中/取消
+        def on_item_clicked(item):
+            if item.isSelected() and getattr(item, "_toggled", False):
+                script_list.clearSelection()
+                item._toggled = False
+            else:
+                # 取消其他标记
+                for i in range(script_list.count()):
+                    script_list.item(i)._toggled = False
+                item.setSelected(True)
+                item._toggled = True
+        script_list.itemClicked.connect(on_item_clicked)
+        
+        # 底部按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        run_btn = QPushButton("运行")
+        cancel_btn = QPushButton("取消")
+        for btn in (run_btn, cancel_btn):
+            btn.setFixedHeight(36)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: rgba(255, 255, 255, 220);
+                    border: 1px solid #8B4513;
+                    border-radius: 6px;
+                    color: #000000;
+                    font-size: 13px;
+                    font-weight: bold;
+                    padding: 8px 18px;
+                }
+                QPushButton:hover {
+                    background-color: rgba(255, 182, 193, 220);
+                }
+            """)
+        btn_layout.addWidget(run_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+        
+        def run_selected_script():
+            items = script_list.selectedItems()
+            if not items:
+                dialog.reject()
+                return
+            script_path = items[0].data(Qt.UserRole)
+            if not script_path or not os.path.exists(script_path):
+                dialog.reject()
+                return
+            dialog.accept()
+            try:
+                # 在当前进程中加载并执行脚本，便于获取主窗口实例
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("mod_editor_script", script_path)
+                module = importlib.util.module_from_spec(spec)
+                sys.modules["mod_editor_script"] = module
+                spec.loader.exec_module(module)
+                if hasattr(module, "main") and callable(module.main):
+                    module.main()
+            except Exception:
+                QMessageBox.warning(self, "运行失败", "脚本运行出错，请检查脚本。")
+        
+        run_btn.clicked.connect(run_selected_script)
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        dialog.exec()
+    
+    def parse_mod_with_dictionaries(self):
+        """使用所有字典解析mod文件夹"""
+        # 获取当前mod名称（某些模式下仅用于提示）
+        mod_name = self.mod_name_input.text().strip()
+
+        # 优先使用当前文件树对应的物理路径，保证和左侧文件树完全一致
+        mod_file_path = None
+
+        # 1）导出合并模式：始终使用合并临时目录
+        if hasattr(self, "_export_mode") and getattr(self, "_export_mode", False) \
+                and hasattr(self, "_export_temp_dir") and self._export_temp_dir:
+            mod_file_path = self._export_temp_dir
+        # 2）编辑/普通导入模式：如果之前加载文件树时已经记录了路径，则直接复用
+        elif hasattr(self, "current_mod_file_path") and self.current_mod_file_path:
+            mod_file_path = self.current_mod_file_path
+        else:
+            # 3）只有在没有现成路径缓存时，才根据名称去mods目录里反查
+            if not mod_name:
+                # 显示悬浮提示
+                self.show_parse_hint("未能解析该mod（未输入mod名称）")
+                return
+            mod_file_path = self.get_mod_file_path(mod_name)
+        if not mod_file_path or not os.path.exists(mod_file_path):
+            self.show_parse_hint("未能解析该mod（找不到mod文件）")
+            return
+        
+        # 获取文件列表
+        file_list = []
+        try:
+            if mod_file_path.endswith('.zip'):
+                import zipfile
+                with zipfile.ZipFile(mod_file_path, 'r') as zip_file:
+                    file_list = zip_file.namelist()
+            elif os.path.isdir(mod_file_path):
+                file_list = self.get_folder_files(mod_file_path)
+        except Exception as e:
+            self.show_parse_hint(f"未能解析该mod（读取文件失败: {str(e)}）")
+            return
+        
+        # 加载所有字典
+        project_root = self.get_project_root()
+        dictionary_dir = os.path.join(project_root, "dictionary")
+        if not os.path.exists(dictionary_dir):
+            self.show_parse_hint("未能解析该mod（字典目录不存在）")
+            return
+        
+        dictionaries = {}
+        for filename in os.listdir(dictionary_dir):
+            if filename.endswith('.json'):
+                dict_name = os.path.splitext(filename)[0]
+                dict_path = os.path.join(dictionary_dir, filename)
+                try:
+                    with open(dict_path, 'r', encoding='utf-8') as f:
+                        dictionaries[dict_name] = json.load(f)
+                except Exception:
+                    continue
+        
+        if not dictionaries:
+            self.show_parse_hint("未能解析该mod（没有可用的字典）")
+            return
+        
+        # 解析文件列表
+        parse_results = {}  # {路径: [解析结果列表]}，路径可能是文件或文件夹
+        all_keywords = set()  # 所有解析到的关键词
+        
+        for file_path in file_list:
+            # 标准化路径（统一使用/分隔符，转小写）
+            normalized_path = file_path.replace('\\', '/').lower()
+            is_folder = normalized_path.endswith('/')
+            
+            # 生成可能的路径变体（处理nativePC前缀）
+            possible_paths = [normalized_path]
+            # 如果路径没有nativepc前缀，添加一个带前缀的版本
+            if not normalized_path.startswith('nativepc/'):
+                possible_paths.append('nativepc/' + normalized_path)
+            # 如果路径有nativepc前缀，也尝试去掉前缀的版本
+            elif normalized_path.startswith('nativepc/'):
+                possible_paths.append(normalized_path[9:])  # 去掉 'nativepc/' 前缀
+            
+            # 遍历所有字典进行匹配
+            for dict_name, dict_data in dictionaries.items():
+                matches = []
+                # 尝试所有可能的路径变体
+                for path_variant in possible_paths:
+                    path_matches = self.match_path_in_dictionary(path_variant, dict_data, is_folder)
+                    if path_matches:
+                        matches.extend(path_matches)
+                
+                if matches:
+                    if file_path not in parse_results:
+                        parse_results[file_path] = []
+                    for match in matches:
+                        parse_results[file_path].append(match)
+                        all_keywords.add(match)
+        if not parse_results:
+            self.show_parse_hint("未能解析该mod")
+            return
+        
+        # 更新文件树显示（添加解析结果）
+        self.update_file_tree_with_parse_results(parse_results)
+        
+        # 显示解析结果框
+        self.parse_result_list.clear()
+        for keyword in sorted(all_keywords):
+            item = QListWidgetItem(keyword)
+            item.setData(Qt.UserRole, keyword)  # 存储关键词用于高亮
+            self.parse_result_list.addItem(item)
+        
+        self.parse_result_widget.setVisible(True)
+        self.parse_results_data = parse_results  # 保存解析结果数据
+    
+    def match_path_in_dictionary(self, normalized_path, dict_data, is_folder=False, parent_path=None):
+        """在字典中匹配路径，从叶子节点往根节点解析，返回匹配到的含义列表（完整路径链）
+        使用精确匹配：
+        - 如果字典路径是文件夹（没有具体文件名），匹配文件夹路径
+        - 如果字典路径是文件（有具体文件名），匹配文件路径
+        """
+        matches = []
+        
+        if parent_path is None:
+            parent_path = []
+        
+        def normalize_display(text):
+            """规范显示文本，去掉形如【xxx】服装的包装"""
+            import re
+            return re.sub(r"^【(.*)】\s*服装$", r"\1", text).strip() if isinstance(text, str) else text
+
+        def is_path_match(file_path, dict_path, is_file_folder):
+            """精确匹配：
+            - 如果字典路径是文件夹（没有文件名），只匹配文件夹路径（完全一致），不匹配文件
+            - 如果字典路径是文件（有文件名），只匹配文件路径（完全一致）
+            """
+            # 判断字典路径是文件夹还是文件
+            # 如果字典路径以/结尾，或者路径中没有文件名（最后一个部分没有扩展名），则是文件夹
+            dict_is_folder = dict_path.endswith('/')
+            if not dict_is_folder:
+                # 检查是否有文件扩展名（简单判断：包含点且最后一个部分有点）
+                parts = dict_path.split('/')
+                last_part = parts[-1] if parts else ''
+                # 如果没有扩展名（没有点，或者最后一部分是纯数字/字母），可能是文件夹
+                dict_is_folder = '.' not in last_part or len(last_part.split('.')) < 2
+            
+            # 如果字典路径是文件夹，去掉末尾的/进行比较
+            dict_path_clean = dict_path.rstrip('/')
+            file_path_clean = file_path.rstrip('/')
+            
+            # 严格匹配：文件夹只匹配文件夹，文件只匹配文件
+            if dict_is_folder:
+                # 字典是文件夹，只匹配文件夹路径（完全一致）
+                if is_file_folder:
+                    return file_path_clean == dict_path_clean
+                else:
+                    # 字典是文件夹，但文件路径是文件，不匹配
+                    return False
+            else:
+                # 字典是文件，只匹配文件路径（完全一致）
+                if not is_file_folder:
+                    return file_path_clean == dict_path_clean
+                else:
+                    # 字典是文件，但文件路径是文件夹，不匹配
+                    return False
+        
+        if isinstance(dict_data, list):
+            # 列表格式：[[路径, 含义], ...]
+            for item in dict_data:
+                if isinstance(item, list) and len(item) >= 2:
+                    dict_path = item[0].replace('\\', '/').lower().strip()
+                    meaning = normalize_display(item[1])
+                    if is_path_match(normalized_path, dict_path, is_folder):
+                        # 列表格式直接返回含义
+                        matches.append(meaning)
+        elif isinstance(dict_data, dict):
+            # 字典格式：可能是嵌套字典或普通字典
+            # 先检查是否是叶子节点（所有值都是简单类型，不是字典）
+            is_leaf = True
+            for value in dict_data.values():
+                if isinstance(value, dict):
+                    is_leaf = False
+                    break
+            
+            if is_leaf:
+                # 这是叶子节点，检查是否有匹配的路径
+                for key, value in dict_data.items():
+                    if isinstance(value, str):
+                        # 普通字典：{关键词: 路径}
+                        dict_path = value.replace('\\', '/').lower().strip()
+                        if is_path_match(normalized_path, dict_path, is_folder):
+                            # 叶子节点匹配，构建从叶子到根的完整路径
+                            full_path = parent_path + [key]
+                            path_meaning = ' > '.join(full_path)
+                            matches.append(path_meaning)
+                    elif isinstance(value, list):
+                        # 值可能是列表
+                        for item in value:
+                            if isinstance(item, str):
+                                dict_path = item.replace('\\', '/').lower().strip()
+                                if is_path_match(normalized_path, dict_path, is_folder):
+                                    # 叶子节点匹配，构建从叶子到根的完整路径
+                                    full_path = parent_path + [key]
+                                    path_meaning = ' > '.join(full_path)
+                                    matches.append(path_meaning)
+            else:
+                # 这是中间节点，递归查找子节点
+                for key, value in dict_data.items():
+                    if isinstance(value, dict):
+                        # 嵌套字典，递归查找，传递当前路径
+                        new_path = parent_path + [key]
+                        sub_matches = self.match_path_in_dictionary(normalized_path, value, is_folder, new_path)
+                        matches.extend(sub_matches)
+                    elif isinstance(value, str):
+                        # 普通字典：{关键词: 路径}
+                        dict_path = value.replace('\\', '/').lower().strip()
+                        if is_path_match(normalized_path, dict_path, is_folder):
+                            # 直接匹配，构建路径
+                            full_path = parent_path + [key]
+                            path_meaning = ' > '.join(full_path)
+                            matches.append(path_meaning)
+                    elif isinstance(value, list):
+                        # 值可能是列表
+                        for item in value:
+                            if isinstance(item, str):
+                                dict_path = item.replace('\\', '/').lower().strip()
+                                if is_path_match(normalized_path, dict_path, is_folder):
+                                    # 直接匹配，构建路径
+                                    full_path = parent_path + [key]
+                                    path_meaning = ' > '.join(full_path)
+                                    matches.append(path_meaning)
+        
+        return matches
+    
+    def update_file_tree_with_parse_results(self, parse_results):
+        """更新文件树，在精确匹配的路径（文件或文件夹）上显示解析结果"""
+        # 遍历文件树的所有项
+        def update_tree_item(item, depth=0):
+            # 获取原始文本（去掉已有的括号部分）
+            text = item.text(0)
+            if '(' in text:
+                original_text = text.split('(')[0].strip()
+            else:
+                original_text = text
+            
+            # 优先使用在display_file_tree中记录的完整路径键
+            path_key = item.data(0, Qt.UserRole)
+            found_results = []
+            if path_key:
+                # 兼容：文件夹路径可能以/结尾，文件不以/结尾
+                candidates = {str(path_key)}
+                if str(path_key).endswith('/'):
+                    candidates.add(str(path_key).rstrip('/'))
+                else:
+                    candidates.add(str(path_key) + '/')
+                for key in candidates:
+                    if key in parse_results:
+                        found_results = parse_results[key]
+                        break
+            else:
+                # 兼容老逻辑：根据文本重建路径（避免某些旧数据没有data的情况）
+                full_path = []
+                current = item
+                while current:
+                    current_text = current.text(0)
+                    if '(' in current_text:
+                        current_text = current_text.split('(')[0].strip()
+                    full_path.insert(0, current_text)
+                    current = current.parent()
+                
+                if len(full_path) > 1:
+                    path_str = '/'.join(full_path[1:])
+                    # 如果是文件夹，添加/后缀
+                    if item.childCount() > 0:
+                        path_str_with_slash = path_str + '/'
+                    else:
+                        path_str_with_slash = None
+                    
+                    if path_str in parse_results:
+                        found_results = parse_results[path_str]
+                    elif path_str_with_slash and path_str_with_slash in parse_results:
+                        found_results = parse_results[path_str_with_slash]
+                
+            if found_results:
+                # 去重
+                unique_results = list(set(found_results))
+                result_text = ', '.join(unique_results)
+                # 添加括号和样式
+                new_text = f"{original_text} ({result_text})"
+                item.setText(0, new_text)
+                
+                # 设置样式（加粗、下划线、亮橙色）
+                from PySide6.QtGui import QFont
+                font = QFont()
+                font.setBold(True)
+                font.setUnderline(True)
+                item.setFont(0, font)
+                item.setForeground(0, QColor("#FFA500"))  # 亮橙色
+            
+            # 递归处理子项
+            for i in range(item.childCount()):
+                update_tree_item(item.child(i), depth + 1)
+        
+        # 从根项开始更新
+        root = self.file_tree.invisibleRootItem()
+        child_count = root.childCount()
+        for i in range(child_count):
+            update_tree_item(root.child(i))
+    
+    def highlight_file_item(self, item):
+        """高亮显示对应的文件行"""
+        keyword = item.data(Qt.UserRole)
+        if not keyword or not hasattr(self, 'parse_results_data'):
+            return
+        
+        # 先清除所有高亮
+        self.clear_file_tree_highlight()
+        
+        # 查找包含该关键词的文件
+        target_files = []
+        for file_path, results in self.parse_results_data.items():
+            if keyword in results:
+                target_files.append(file_path)
+        
+        if not target_files:
+            return
+        
+        # 高亮显示匹配的文件
+        scrolled = {"done": False}
+
+        def highlight_tree_item(tree_item, target_paths):
+            # 优先使用display_file_tree中记录的完整路径键进行匹配
+            path_key = tree_item.data(0, Qt.UserRole)
+            matched = False
+            if path_key:
+                candidates = {str(path_key)}
+                if str(path_key).endswith('/'):
+                    candidates.add(str(path_key).rstrip('/'))
+                else:
+                    candidates.add(str(path_key) + '/')
+                for key in candidates:
+                    if key in target_paths:
+                        matched = True
+                        break
+            else:
+                # 兼容老逻辑：根据文本重建路径
+                text = tree_item.text(0)
+                if '(' in text:
+                    original_text = text.split('(')[0].strip()
+                else:
+                    original_text = text
+                
+                # 获取完整路径
+                full_path = []
+                current = tree_item
+                while current:
+                    current_text = current.text(0)
+                    if '(' in current_text:
+                        current_text = current_text.split('(')[0].strip()
+                    full_path.insert(0, current_text)
+                    current = current.parent()
+                
+                if len(full_path) > 1:
+                    path_str = '/'.join(full_path[1:])
+                    if tree_item.childCount() > 0:
+                        path_str_with_slash = path_str + '/'
+                        if path_str_with_slash in target_paths or path_str in target_paths:
+                            matched = True
+                    else:
+                        if path_str in target_paths:
+                            matched = True
+
+            if matched:
+                # 高亮显示
+                tree_item.setBackground(0, QColor("#FFFF00"))  # 黄色背景
+                # 展开父项以便看到
+                parent = tree_item.parent()
+                while parent:
+                    parent.setExpanded(True)
+                    parent = parent.parent()
+                # 首次匹配时滚动到该项
+                if not scrolled["done"]:
+                    from PySide6.QtWidgets import QAbstractItemView
+                    self.file_tree.scrollToItem(tree_item, QAbstractItemView.PositionAtCenter)
+                    scrolled["done"] = True
+            
+            # 递归处理子项
+            for i in range(tree_item.childCount()):
+                highlight_tree_item(tree_item.child(i), target_paths)
+        
+        root = self.file_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            highlight_tree_item(root.child(i), target_files)
+    
+    def clear_file_tree_highlight(self):
+        """清除文件树的高亮"""
+        def clear_item(item):
+            # 重置背景色为透明，避免整行变黑
+            from PySide6.QtGui import QBrush
+            item.setBackground(0, QBrush(Qt.NoBrush))
+            for i in range(item.childCount()):
+                clear_item(item.child(i))
+        
+        root = self.file_tree.invisibleRootItem()
+        for i in range(root.childCount()):
+            clear_item(root.child(i))
+    
+    def show_parse_hint(self, message):
+        """显示解析提示（悬浮文本，1秒后消失）"""
+        # 隐藏解析结果框
+        self.parse_result_widget.setVisible(False)
+        
+        # 创建悬浮提示标签
+        hint_label = QLabel(message)
+        hint_label.setStyleSheet("""
+            QLabel {
+                background-color: rgba(255, 182, 193, 220);
+                border: 1px solid #8B4513;
+                border-radius: 4px;
+                color: #8B4513;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 5px 10px;
+            }
+        """)
+        hint_label.setAlignment(Qt.AlignCenter)
+        
+        # 获取按钮位置
+        if hasattr(self, 'import_panel') and self.import_panel:
+            # 找到"使用字典"按钮
+            dict_btn = None
+            for widget in self.import_panel.findChildren(QPushButton):
+                if widget.text() == "使用字典":
+                    dict_btn = widget
+                    break
+            
+            if dict_btn:
+                # 获取按钮的父布局
+                parent_widget = dict_btn.parent()
+                if parent_widget:
+                    parent_layout = parent_widget.layout()
+                    if parent_layout:
+                        # 找到按钮在布局中的位置
+                        button_index = -1
+                        for i in range(parent_layout.count()):
+                            item = parent_layout.itemAt(i)
+                            if item and item.widget() == dict_btn:
+                                button_index = i
+                                break
+                        
+                        if button_index >= 0:
+                            # 创建临时容器
+                            hint_container = QWidget()
+                            hint_layout = QVBoxLayout()
+                            hint_layout.setContentsMargins(0, 0, 0, 0)
+                            hint_layout.setSpacing(0)
+                            hint_container.setLayout(hint_layout)
+                            hint_layout.addWidget(hint_label)
+                            
+                            # 插入到按钮之前
+                            parent_layout.insertWidget(button_index, hint_container)
+                            
+                            # 1秒后移除
+                            def remove_hint():
+                                hint_container.setParent(None)
+                                hint_container.deleteLater()
+                            
+                            QTimer.singleShot(1000, remove_hint)
+    
     def get_window_theme_settings(self, window_key):
         """获取指定窗口的主题设置"""
         settings = self.load_theme_settings()
@@ -3025,9 +3623,50 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(dict_btn)
         button_layout.addWidget(script_btn)
         
-        # 连接未实现功能的按钮
-        dict_btn.clicked.connect(self.show_unimplemented_feature_message)
-        script_btn.clicked.connect(self.show_unimplemented_feature_message)
+        # 连接按钮功能
+        dict_btn.clicked.connect(self.parse_mod_with_dictionaries)
+        script_btn.clicked.connect(self.show_mod_editor_script_dialog)
+        
+        # 解析结果框（初始隐藏）
+        self.parse_result_widget = QWidget()
+        self.parse_result_layout = QVBoxLayout()
+        self.parse_result_layout.setContentsMargins(5, 5, 5, 5)
+        self.parse_result_layout.setSpacing(5)
+        self.parse_result_widget.setLayout(self.parse_result_layout)
+        self.parse_result_widget.setVisible(False)
+        
+        parse_keyword_label = QLabel("解析到的关键词：")
+        parse_keyword_label.setStyleSheet("""
+            QLabel {
+                color: #FFFFFF;
+                font-size: 12px;
+                font-weight: bold;
+            }
+        """)
+        self.parse_result_layout.addWidget(parse_keyword_label)
+        
+        # 解析结果列表（可点击）
+        self.parse_result_list = QListWidget()
+        self.parse_result_list.setStyleSheet("""
+            QListWidget {
+                background-color: rgba(255, 255, 255, 200);
+                border: 1px solid #8B4513;
+                border-radius: 4px;
+                color: #8B4513;
+                font-size: 12px;
+            }
+            QListWidget::item {
+                padding: 5px;
+            }
+            QListWidget::item:hover {
+                background-color: rgba(255, 182, 193, 200);
+            }
+        """)
+        self.parse_result_list.itemClicked.connect(self.highlight_file_item)
+        self.parse_result_layout.addWidget(self.parse_result_list)
+        
+        # 将解析结果框添加到按钮布局下方
+        button_layout.addWidget(self.parse_result_widget)
         
         # 组装操作区域
         action_layout.addLayout(action_header_layout)
@@ -3139,9 +3778,11 @@ class MainWindow(QMainWindow):
             self.show_import_panel_with_file(file_path)
     
     def show_import_panel_with_file(self, file_path):
-        """显示导入面板并检查modinfo文件夹"""
+        """显示导入面板并检查modinfo文件夹，同时立即解压压缩包"""
         import zipfile
         import xml.etree.ElementTree as ET
+        import os
+        import shutil
         
         # 确保导入面板已创建
         if not hasattr(self, 'import_panel') or not self.import_panel:
@@ -3156,10 +3797,36 @@ class MainWindow(QMainWindow):
         self.thumbnail_preview.setText("无图片")
         
         # 设置模组名称为zip文件名（不含扩展名）
-        import os
         file_basename = os.path.basename(file_path)
         mod_name = os.path.splitext(file_basename)[0]
         self.mod_name_input.setText(mod_name)
+        
+        # 保存选中的文件路径
+        self.selected_file_path = file_path
+        
+        # 立即解压压缩包到mods目录
+        project_root = self.get_project_root()
+        mods_dir = os.path.join(project_root, "mods")
+        os.makedirs(mods_dir, exist_ok=True)
+        
+        # 使用模组名称作为文件夹名
+        mod_folder_name = mod_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+        mod_folder_path = os.path.join(mods_dir, mod_folder_name)
+        
+        # 如果文件夹已存在，先删除
+        if os.path.exists(mod_folder_path):
+            shutil.rmtree(mod_folder_path)
+        
+        # 解压压缩包
+        try:
+            with zipfile.ZipFile(file_path, 'r') as zip_file:
+                zip_file.extractall(mod_folder_path)
+            
+            # 保存解压的文件夹路径，用于取消时删除
+            self.extracted_mod_folder_path = mod_folder_path
+        except Exception as e:
+            # 解压失败，保持现状
+            self.extracted_mod_folder_path = None
         
         # 清空文件树
         self.file_tree.clear()
@@ -3238,7 +3905,8 @@ class MainWindow(QMainWindow):
         self.show_panel_with_animation(self.import_panel, "fade_in", 250, position_center=False)  # 加快到250ms
     
     def display_file_tree(self, file_list):
-        """显示树形文件结构"""
+        """显示树形文件结构，并在每个节点上保存完整相对路径，方便解析和高亮精确匹配"""
+        from PySide6.QtCore import Qt
         self.file_tree.clear()
         
         # 创建文件夹结构
@@ -3269,23 +3937,33 @@ class MainWindow(QMainWindow):
                 # 添加文件名
                 current_dict[parts[-1]] = None  # None表示这是文件
         
-        # 递归构建树形结构
-        def build_tree(parent_item, folder_data):
+        # 递归构建树形结构，同时为每个节点记录完整路径（相对于mod根目录）
+        def build_tree(parent_item, folder_data, parent_path=""):
             for name, content in sorted(folder_data.items()):
+                # 计算当前节点路径（不带或带/的形式，后面解析时都会兼容）
+                if parent_path:
+                    node_path = f"{parent_path}/{name}"
+                else:
+                    node_path = name
+                
                 if content is None:
                     # 这是文件
                     item = QTreeWidgetItem(parent_item)
                     item.setText(0, name)
+                    # 记录完整路径（文件不带/）
+                    item.setData(0, Qt.UserRole, node_path)
                     # 设置文件图标（可选）
                     item.setIcon(0, self.style().standardIcon(QStyle.SP_FileIcon))
                 else:
                     # 这是文件夹
                     folder_item = QTreeWidgetItem(parent_item)
                     folder_item.setText(0, name)
+                    # 记录完整路径（文件夹统一记录为带/）
+                    folder_item.setData(0, Qt.UserRole, node_path + '/')
                     # 设置文件夹图标
                     folder_item.setIcon(0, self.style().standardIcon(QStyle.SP_DirIcon))
                     # 递归添加子项
-                    build_tree(folder_item, content)
+                    build_tree(folder_item, content, node_path)
                     # 默认展开文件夹
                     folder_item.setExpanded(True)
         
@@ -3488,12 +4166,14 @@ class MainWindow(QMainWindow):
                     break
     
     def save_mod_info(self):
-        """保存模组信息并解压压缩包"""
-        import zipfile
+        """保存模组信息并编辑XML（压缩包已在导入时解压）"""
         import xml.etree.ElementTree as ET
-        import shutil
+        import os
         
-        if not hasattr(self, 'selected_file_path'):
+        if not hasattr(self, 'extracted_mod_folder_path') or not self.extracted_mod_folder_path:
+            return
+        
+        if not os.path.exists(self.extracted_mod_folder_path):
             return
         
         try:
@@ -3516,18 +4196,8 @@ class MainWindow(QMainWindow):
             
             category, author = self.check_and_handle_unknown_category_author(category, author)
             
-            # 创建mods目录（如果不存在）
-            project_root = self.get_project_root()
-            mods_dir = os.path.join(project_root, "mods")
-            os.makedirs(mods_dir, exist_ok=True)
-            
-            # 使用模组名称作为文件夹名
-            mod_folder_name = mod_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-            mod_folder_path = os.path.join(mods_dir, mod_folder_name)
-            
-            # 解压压缩包到mods目录
-            with zipfile.ZipFile(self.selected_file_path, 'r') as zip_file:
-                zip_file.extractall(mod_folder_path)
+            # 使用已解压的文件夹路径
+            mod_folder_path = self.extracted_mod_folder_path
             
             # 创建modinfo文件夹
             modinfo_dir = os.path.join(mod_folder_path, "modinfo")
@@ -3579,6 +4249,9 @@ class MainWindow(QMainWindow):
             
             # 添加到主表格（不再检查未知项，因为已经在上面检查过了）
             self.add_mod_to_table(mod_name, category, author, check_unknown=False)
+            
+            # 清除解压文件夹路径标记（已保存，不需要删除）
+            self.extracted_mod_folder_path = None
             
             # 关闭导入面板
             self.hide_import_panel()
@@ -3783,6 +4456,8 @@ class MainWindow(QMainWindow):
         
         # 获取模组文件路径
         mod_file_path = self.get_mod_file_path(mod_name)
+        # 记录当前用于构建文件树的物理路径，供字典解析复用
+        self.current_mod_file_path = mod_file_path
         
         if mod_file_path and os.path.exists(mod_file_path):
             try:
@@ -3807,19 +4482,43 @@ class MainWindow(QMainWindow):
         """获取模组文件路径"""
         project_root = self.get_project_root()
         mods_dir = os.path.join(project_root, "mods")
+        if not os.path.exists(mods_dir):
+            return None
         
-        # 查找模组文件夹
-        mod_folder_name = mod_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-        mod_folder_path = os.path.join(mods_dir, mod_folder_name)
+        # 尝试多种可能的文件夹名称
+        possible_names = [
+            mod_name,  # 原始名称（带空格）
+            mod_name.replace(" ", "_").replace("/", "_").replace("\\", "_"),  # 空格替换为下划线
+            mod_name.replace(" ", ""),  # 去掉所有空格
+        ]
         
-        if os.path.exists(mod_folder_path):
-            # 查找zip文件或文件夹
-            for item in os.listdir(mod_folder_path):
-                item_path = os.path.join(mod_folder_path, item)
-                if item.endswith('.zip') and os.path.isfile(item_path):
-                    return item_path
-                elif os.path.isdir(item_path) and item != 'modinfo':
-                    return item_path
+        # 首先尝试精确匹配
+        for folder_name in possible_names:
+            mod_folder_path = os.path.join(mods_dir, folder_name)
+            if os.path.exists(mod_folder_path):
+                # 查找zip文件或文件夹
+                for item in os.listdir(mod_folder_path):
+                    item_path = os.path.join(mod_folder_path, item)
+                    if item.endswith('.zip') and os.path.isfile(item_path):
+                        return item_path
+                    elif os.path.isdir(item_path) and item != 'modinfo':
+                        return item_path
+        
+        # 如果精确匹配失败，尝试模糊匹配（包含关系）
+        mod_name_lower = mod_name.lower()
+        for item in os.listdir(mods_dir):
+            item_path = os.path.join(mods_dir, item)
+            if os.path.isdir(item_path):
+                item_lower = item.lower()
+                # 检查是否包含mod名称的关键部分
+                if mod_name_lower in item_lower or item_lower in mod_name_lower:
+                    # 查找zip文件或文件夹
+                    for sub_item in os.listdir(item_path):
+                        sub_item_path = os.path.join(item_path, sub_item)
+                        if sub_item.endswith('.zip') and os.path.isfile(sub_item_path):
+                            return sub_item_path
+                        elif os.path.isdir(sub_item_path) and sub_item != 'modinfo':
+                            return sub_item_path
         
         return None
     
@@ -4401,9 +5100,22 @@ class MainWindow(QMainWindow):
         pass
     
     def hide_import_panel(self):
-        """隐藏导入面板"""
+        """隐藏导入面板，如果取消则删除解压的mod文件夹"""
+        import shutil
+        import os
+        
         if not hasattr(self, 'import_panel') or not self.import_panel:
             return
+        
+        # 如果存在解压的文件夹路径（说明用户取消了，未保存），删除它
+        if hasattr(self, 'extracted_mod_folder_path') and self.extracted_mod_folder_path:
+            if os.path.exists(self.extracted_mod_folder_path):
+                try:
+                    shutil.rmtree(self.extracted_mod_folder_path)
+                    print(f"[导入取消] 已删除解压的mod文件夹: {self.extracted_mod_folder_path}")
+                except Exception as e:
+                    print(f"[导入取消] 删除文件夹失败: {e}")
+            self.extracted_mod_folder_path = None
         
         # 简化：直接隐藏，确保功能正常
         self.import_panel.hide()
@@ -4510,9 +5222,11 @@ class MainWindow(QMainWindow):
         # 连接标签管理按钮
         self.btn_tag_manage.clicked.connect(self.show_tag_management_panel)
         
-        # 连接未实现功能的按钮
-        self.btn_dict_manage.clicked.connect(self.show_unimplemented_feature_message)
-        self.btn_script_manage.clicked.connect(self.show_unimplemented_feature_message)
+        # 连接字典管理按钮
+        self.btn_dict_manage.clicked.connect(self.show_dictionary_management_panel)
+        
+        # 连接脚本管理按钮
+        self.btn_script_manage.clicked.connect(self.show_script_management_panel)
         
         # 连接导出选中按钮
         self.btn_export_selected.clicked.connect(self.export_selected_mods)
@@ -4703,7 +5417,6 @@ class MainWindow(QMainWindow):
                     }}
                 """
                 self.setStyleSheet(window_style)
-                print(f"[调试] 使用渐变背景，图片不存在: {background_image}")
         except Exception as e:
             # 如果背景设置失败，使用默认渐变背景，确保窗口能正常显示
             print(f"[警告] 应用窗口背景失败: {e}")
@@ -5705,6 +6418,44 @@ class MainWindow(QMainWindow):
                     self.on_filter_type_changed("标签")
             self.refresh_mod_list()
     
+    def show_dictionary_management_panel(self):
+        """显示字典管理面板"""
+        while True:
+            selection_panel = DictionarySelectionPanel(self)
+            result = selection_panel.exec()
+            if result == QDialog.DialogCode.Accepted and selection_panel.selected_dictionary:
+                # 打开选中的字典编辑面板
+                edit_panel = DictionaryEditPanel(selection_panel.selected_dictionary, self, selection_panel)
+                edit_result = edit_panel.exec()
+                # 如果编辑面板被接受（返回选择页面），继续循环显示选择面板
+                if edit_result == QDialog.DialogCode.Accepted:
+                    continue
+                else:
+                    # 如果编辑面板被拒绝（关闭），退出循环
+                    break
+            else:
+                # 如果选择面板被取消，退出循环
+                break
+    
+    def show_script_management_panel(self):
+        """显示脚本管理面板"""
+        while True:
+            selection_panel = ScriptSelectionPanel(self)
+            result = selection_panel.exec()
+            if result == QDialog.DialogCode.Accepted and selection_panel.selected_script:
+                # 打开选中的脚本编辑面板
+                edit_panel = ScriptEditPanel(selection_panel.selected_script, self, selection_panel)
+                edit_result = edit_panel.exec()
+                # 如果编辑面板被接受（返回选择页面），继续循环显示选择面板
+                if edit_result == QDialog.DialogCode.Accepted:
+                    continue
+                else:
+                    # 如果编辑面板被拒绝（关闭），退出循环
+                    break
+            else:
+                # 如果选择面板被取消，退出循环
+                break
+    
     def refresh_category_combo(self):
         """刷新分类下拉框"""
         if hasattr(self, 'category_combo') and self.category_combo:
@@ -6287,6 +7038,8 @@ class MainWindow(QMainWindow):
         # 复用load_mod_file_tree的逻辑，但使用临时目录
         if hasattr(self, 'file_tree') and self.file_tree:
             self.file_tree.clear()
+            # 记录当前用于构建文件树的物理路径，供字典解析复用
+            self.current_mod_file_path = temp_dir
             
             # 获取文件列表
             file_list = self.get_folder_files(temp_dir)
